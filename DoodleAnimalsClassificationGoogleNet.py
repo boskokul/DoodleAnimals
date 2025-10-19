@@ -177,8 +177,9 @@ train_loader, val_loader, test_loader = create_dataloaders(config)
 # MODELI
 def create_googlenet_model(num_classes=20):
     # googlenet: 7M params
-    # Uzimamo model i forsiramo da ne koristi Auxiliary Losses jer nisu neophodni za Fine-Tuning
-    model = models.googlenet(pretrained=True, aux_logits=False)
+
+    # ne dozvoljava da aux_logits stavimo na false pa cemo to handle-ovati u train_epoch
+    model = models.googlenet(pretrained=True)
 
     # Zamrzavanje svih parametara
     for param in model.parameters():
@@ -220,8 +221,10 @@ def train_epoch(model, dataloader, criterion, optimizer, device):
         inputs, labels = inputs.to(device), labels.to(device)
 
         optimizer.zero_grad()
-        # GoogLeNet u train modu, bez aux_logits, vraca tensor direktno
-        outputs = model(inputs) 
+        outputs = model(inputs)
+        # GoogLeNet u train modu vraca tuple
+        if isinstance(outputs, tuple):
+            outputs = outputs[0]
         loss = criterion(outputs, labels)
         loss.backward()
         optimizer.step()
@@ -244,7 +247,7 @@ def validate(model, dataloader, criterion, device):
     with torch.no_grad():
         for inputs, labels in tqdm(dataloader, desc='Validation', leave=False):
             inputs, labels = inputs.to(device), labels.to(device)
-            # GoogLeNet u eval modu (sa aux_logits=False) vraca tensor direktno
+            # GoogLeNet u eval modu ne vraca tuple
             outputs = model(inputs)
             loss = criterion(outputs, labels)
 
