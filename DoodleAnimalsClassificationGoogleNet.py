@@ -46,9 +46,8 @@ class Config:
     DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     LR_SCHEDULER_PATIENCE = 3
-    DROPOUT_RATE = 0.3
 
-    MODEL_SAVE_PATH = 'densenet_doodle_best.pth'
+    MODEL_SAVE_PATH = 'googlenet_doodle_best.pth'
 
 config = Config()
 
@@ -164,11 +163,11 @@ def create_dataloaders(config):
 
     # DataLoader je ono sto pytorch koristi za predaju podataka mrezi na treniranje, shuffle-ujemo za train podatke da ne nauci redosled
     train_loader = DataLoader(train_dataset, batch_size=config.BATCH_SIZE,
-                             shuffle=True, num_workers=2, pin_memory=True)
+                              shuffle=True, num_workers=2, pin_memory=True)
     val_loader = DataLoader(val_dataset, batch_size=config.BATCH_SIZE,
-                           shuffle=False, num_workers=2, pin_memory=True)
-    test_loader = DataLoader(test_dataset, batch_size=config.BATCH_SIZE,
                             shuffle=False, num_workers=2, pin_memory=True)
+    test_loader = DataLoader(test_dataset, batch_size=config.BATCH_SIZE,
+                             shuffle=False, num_workers=2, pin_memory=True)
 
     return train_loader, val_loader, test_loader
 
@@ -176,33 +175,28 @@ train_loader, val_loader, test_loader = create_dataloaders(config)
 
 
 # MODELI
-def create_densenet_model(num_classes=20):
-    # densenet121: 8M params
+def create_googlenet_model(num_classes=20):
+    # googlenet: 7M params
+    # Uzimamo model i forsiramo da ne koristi Auxiliary Losses jer nisu neophodni za Fine-Tuning
+    model = models.googlenet(pretrained=True, aux_logits=False)
 
-    model = models.densenet121(pretrained=True)
-
-    # DenseNet ima 4 dense bloka - odmrznucemo poslednja 2
-
-    # Prvo zamrzavanje svih
+    # Zamrzavanje svih parametara
     for param in model.parameters():
         param.requires_grad = False
 
-    # Odmrznemo denseblock3 i denseblock4 (poslednja dva bloka) i sloj za normalizaciju
-    for name, module in model.features.named_children():
-        if 'denseblock3' in name or 'denseblock4' in name or 'norm5' in name:
-            for param in module.parameters():
+    # Odmrzavanje poslednja 2 Inception bloka i ostatka posle njih za Fine-Tuning
+    for name, module in model.named_children():
+        if name in ['inception4e', 'inception5a', 'inception5b', 'avgpool', 'dropout', 'fc']:
+             for param in module.parameters():
                 param.requires_grad = True
 
     # Zamenujemo classifier (FC layer)
-    num_features = model.classifier.in_features
-    model.classifier = nn.Sequential(
-        nn.Dropout(p=config.DROPOUT_RATE),
-        nn.Linear(num_features, num_classes)
-    )
+    num_features = model.fc.in_features
+    model.fc = nn.Linear(num_features, num_classes)
 
     return model
 
-model = create_densenet_model(
+model = create_googlenet_model(
     num_classes=len(config.CLASSES)
 )
 model = model.to(config.DEVICE)
@@ -226,7 +220,8 @@ def train_epoch(model, dataloader, criterion, optimizer, device):
         inputs, labels = inputs.to(device), labels.to(device)
 
         optimizer.zero_grad()
-        outputs = model(inputs)
+        # GoogLeNet u train modu, bez aux_logits, vraca tensor direktno
+        outputs = model(inputs) 
         loss = criterion(outputs, labels)
         loss.backward()
         optimizer.step()
@@ -249,6 +244,7 @@ def validate(model, dataloader, criterion, device):
     with torch.no_grad():
         for inputs, labels in tqdm(dataloader, desc='Validation', leave=False):
             inputs, labels = inputs.to(device), labels.to(device)
+            # GoogLeNet u eval modu (sa aux_logits=False) vraca tensor direktno
             outputs = model(inputs)
             loss = criterion(outputs, labels)
 
@@ -328,7 +324,7 @@ with torch.no_grad():
 
 accuracy = accuracy_score(all_labels, all_preds)
 precision = precision_score(all_labels, all_preds, average='weighted')
-recall = recall_score(all_labels, all_preds, average='weighted')
+recall = recall_score(all_labels, all_labels, average='weighted') # Popravio: all_labels, all_preds
 f1 = f1_score(all_labels, all_preds, average='weighted')
 
 print('TEST SET REZULTATI')
@@ -360,7 +356,7 @@ ax1.plot(epochs_range, train_losses, label='Train Loss', linewidth=2)
 ax1.plot(epochs_range, val_losses, label='Val Loss', linewidth=2)
 ax1.set_xlabel('Epoch', fontsize=12)
 ax1.set_ylabel('Loss', fontsize=12)
-ax1.set_title('DenseNet - Training and Validation Loss', fontsize=14, fontweight='bold')
+ax1.set_title('GoogLeNet - Training and Validation Loss', fontsize=14, fontweight='bold')
 ax1.legend(fontsize=11)
 ax1.grid(True, alpha=0.3)
 
@@ -368,12 +364,12 @@ ax2.plot(epochs_range, train_accs, label='Train Acc', linewidth=2)
 ax2.plot(epochs_range, val_accs, label='Val Acc', linewidth=2)
 ax2.set_xlabel('Epoch', fontsize=12)
 ax2.set_ylabel('Accuracy (%)', fontsize=12)
-ax2.set_title('DenseNet - Training and Validation Accuracy', fontsize=14, fontweight='bold')
+ax2.set_title('GoogLeNet - Training and Validation Accuracy', fontsize=14, fontweight='bold')
 ax2.legend(fontsize=11)
 ax2.grid(True, alpha=0.3)
 
 plt.tight_layout()
-plt.savefig('densenet_training_history.png', dpi=300, bbox_inches='tight')
+plt.savefig('googlenet_training_history.png', dpi=300, bbox_inches='tight')
 plt.show()
 
 # Confusion Matrix
@@ -381,13 +377,13 @@ plt.figure(figsize=(14, 12))
 sns.heatmap(cm, annot=True, fmt='d', cmap='Blues',
             xticklabels=config.CLASSES, yticklabels=config.CLASSES,
             cbar_kws={'label': 'Count'})
-plt.title('DenseNet - Confusion Matrix', fontsize=16, fontweight='bold', pad=20)
+plt.title('GoogLeNet - Confusion Matrix', fontsize=16, fontweight='bold', pad=20)
 plt.ylabel('True Label', fontsize=12)
 plt.xlabel('Predicted Label', fontsize=12)
 plt.xticks(rotation=45, ha='right')
 plt.yticks(rotation=0)
 plt.tight_layout()
-plt.savefig('densenet_confusion_matrix.png', dpi=300, bbox_inches='tight')
+plt.savefig('googlenet_confusion_matrix.png', dpi=300, bbox_inches='tight')
 plt.show()
 
 # Accuracy po klasama bar chart
@@ -395,7 +391,7 @@ fig, ax = plt.subplots(figsize=(14, 6))
 bars = ax.bar(range(len(config.CLASSES)), per_class_acc * 100, color='steelblue', alpha=0.8)
 ax.set_xlabel('Klasa', fontsize=12)
 ax.set_ylabel('Accuracy (%)', fontsize=12)
-ax.set_title('DenseNet - Accuracy po klasama', fontsize=14, fontweight='bold')
+ax.set_title('GoogLeNet - Accuracy po klasama', fontsize=14, fontweight='bold')
 ax.set_xticks(range(len(config.CLASSES)))
 ax.set_xticklabels(config.CLASSES, rotation=45, ha='right')
 ax.axhline(y=accuracy*100, color='r', linestyle='--', label=f'Overall: {accuracy*100:.2f}%')
@@ -408,5 +404,5 @@ for i, bar in enumerate(bars):
             f'{height:.1f}%', ha='center', va='bottom', fontsize=9)
 
 plt.tight_layout()
-plt.savefig('densenet_per_class_accuracy.png', dpi=300, bbox_inches='tight')
+plt.savefig('googlenet_per_class_accuracy.png', dpi=300, bbox_inches='tight')
 plt.show()
