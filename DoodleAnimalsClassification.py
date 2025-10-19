@@ -36,20 +36,54 @@ class Config:
 
     # Hiperparametri
     BATCH_SIZE = 64
-    NUM_EPOCHS = 15
+    NUM_EPOCHS = 30 # Povecano da bi se dalo prostora za Early Stopping
     LEARNING_RATE = 0.001
     WEIGHT_DECAY = 1e-4
 
+    EARLY_STOPPING_PATIENCE = 5
+    MIN_DELTA = 0.5 
+
     DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-    # ovde dodati i ostale modele, probacu da napravim da se sve izvrsava odjednom nekako u jednom notebooke-u verovatno da svaki ima svoj config citav
-    MODEL_SAVE_PATH = 'densenet_doodle_best.pth'
-    # MODEL_SAVE_PATH = 'googlenet_doodle_best.pth'
+    LR_SCHEDULER_PATIENCE = 3
+    DROPOUT_RATE = 0.3
 
-    # DenseNet verzija (densenet121, densenet169, densenet201)
-    DENSENET_VARIANT = 'densenet121'
+    MODEL_SAVE_PATH = 'densenet_doodle_best.pth'
 
 config = Config()
+
+class EarlyStopper:
+    def __init__(self, patience=5, min_delta=0):
+        self.patience = patience
+        self.min_delta = min_delta
+        self.counter = 0
+        self.best_score = None
+        self.early_stop = False
+
+    def __call__(self, val_metric, model_save_path, model):
+        score = val_metric
+
+        if self.best_score is None:
+            self.best_score = score
+            self.save_checkpoint(val_metric, model_save_path, model)
+        elif (score < self.best_score + self.min_delta):
+            
+            self.counter += 1
+            print(f'EarlyStopping counter: {self.counter} out of {self.patience}')
+            if self.counter >= self.patience:
+                self.early_stop = True
+        else:
+            print(f'Validation metric improved ({self.best_score:.4f} --> {score:.4f}).')
+            self.best_score = score
+            self.save_checkpoint(val_metric, model_save_path, model)
+            self.counter = 0
+
+        return self.early_stop
+
+    def save_checkpoint(self, val_metric, model_save_path, model):
+        torch.save(model.state_dict(), model_save_path)
+        print(f'Model saved! (Best Val Metric: {val_metric:.2f}%)')
+
 
 # Da bismo koritili dataset za treniranje modela u pytorch-u moramo da napravimo dataloader-e a za to moramo prvo da nasledimo apstraktnu klasu Dataset i implementiramo njene metode __len__ i __getitem__
 # parametar skip je samo indeks od kog ce krenuti da uzima slike za taj dataset a samples_per_class koliko
@@ -92,7 +126,6 @@ class DoodleDataset(Dataset):
 
         return image, label
     
-
 def create_dataloaders(config):
     # sto se tice transformcija ove Resize, Grayscale, ToTensor, Normalize su nam neophodne jer su modeli pretrenirani na imagenet skupu i imaju te velicine 224x224 i 3 boje a nas skup je crno beli crtezi
     # iako smo napisali u prijavi da verovatno nece trebati augmentacija dodao sam RandomRotation, RandomAffine, RandomHorizontalFlip jer su znacajno bas popravile rezultate (naravno samo u trening)
@@ -143,10 +176,10 @@ train_loader, val_loader, test_loader = create_dataloaders(config)
 
 
 # MODELI
-def create_densenet_model(num_classes=20, variant='densenet121', pretrained=True):
+def create_densenet_model(num_classes=20):
     # densenet121: 7M params
 
-    model = models.densenet121(pretrained=pretrained)
+    model = models.densenet121(pretrained=True)
 
     # DenseNet ima 4 dense bloka - odmrznucemo poslednja 2
 
@@ -163,16 +196,14 @@ def create_densenet_model(num_classes=20, variant='densenet121', pretrained=True
     # Zamenujemo classifier (FC layer)
     num_features = model.classifier.in_features
     model.classifier = nn.Sequential(
-        nn.Dropout(p=0.3), # ovo bi trebalo da izdvojim u hiperparametars u config-u ali mozda nece svi modeli koristiti, videcemo posle
+        nn.Dropout(p=config.DROPOUT_RATE),
         nn.Linear(num_features, num_classes)
     )
 
     return model
 
 model = create_densenet_model(
-    num_classes=len(config.CLASSES),
-    variant=config.DENSENET_VARIANT,
-    pretrained=True
+    num_classes=len(config.CLASSES)
 )
 model = model.to(config.DEVICE)
 
@@ -235,9 +266,14 @@ def validate(model, dataloader, criterion, device):
 criterion = nn.CrossEntropyLoss()
 optimizer = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()),
                        lr=config.LEARNING_RATE, weight_decay=config.WEIGHT_DECAY)
-scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', factor=0.5, patience=3)
+# Scheduler prati loss, pa je mode='min'
+scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=config.LR_SCHEDULER_PATIENCE) 
 
-best_val_acc = 0.0
+early_stopper = EarlyStopper(
+    patience=config.EARLY_STOPPING_PATIENCE,
+    min_delta=config.MIN_DELTA,
+)
+
 train_losses, train_accs = [], []
 val_losses, val_accs = [], []
 
@@ -257,16 +293,18 @@ for epoch in range(config.NUM_EPOCHS):
 
     # Learning rate scheduling
     current_lr = optimizer.param_groups[0]['lr']
-    scheduler.step(val_acc)
+    scheduler.step(val_loss) # Scheduler prati loss
     new_lr = optimizer.param_groups[0]['lr']
     if new_lr != current_lr:
         print(f"Learning rate reduced: {current_lr:.6f} -> {new_lr:.6f}")
 
-    if val_acc > best_val_acc:
-        best_val_acc = val_acc
-        torch.save(model.state_dict(), config.MODEL_SAVE_PATH)
-        print(f'Model saved! (Best Val Acc: {val_acc:.2f}%)')
+    # provera ranog zaustavljanja
+    if early_stopper(val_acc, config.MODEL_SAVE_PATH, model):
+        print(f"\nEarly stopping triggered after {epoch+1} epochs.")
+        break
 
+# Ovo je najveci val accuracy sto je postignut
+best_val_acc = early_stopper.best_score 
 print(f"Best validation accuracy: {best_val_acc:.2f}%")
 
 
@@ -314,16 +352,20 @@ for i, class_name in enumerate(config.CLASSES):
 # Train i val loss i accuracy kroz epohe prikaz
 fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
 
-ax1.plot(train_losses, label='Train Loss', linewidth=2)
-ax1.plot(val_losses, label='Val Loss', linewidth=2)
+# Ogranicavamo podatke za plotovanje na stvaran broj epoha (u slucaju ranog zaustavljanja)
+epochs_ran = len(train_losses)
+epochs_range = range(1, epochs_ran + 1)
+
+ax1.plot(epochs_range, train_losses, label='Train Loss', linewidth=2)
+ax1.plot(epochs_range, val_losses, label='Val Loss', linewidth=2)
 ax1.set_xlabel('Epoch', fontsize=12)
 ax1.set_ylabel('Loss', fontsize=12)
 ax1.set_title('DenseNet - Training and Validation Loss', fontsize=14, fontweight='bold')
 ax1.legend(fontsize=11)
 ax1.grid(True, alpha=0.3)
 
-ax2.plot(train_accs, label='Train Acc', linewidth=2)
-ax2.plot(val_accs, label='Val Acc', linewidth=2)
+ax2.plot(epochs_range, train_accs, label='Train Acc', linewidth=2)
+ax2.plot(epochs_range, val_accs, label='Val Acc', linewidth=2)
 ax2.set_xlabel('Epoch', fontsize=12)
 ax2.set_ylabel('Accuracy (%)', fontsize=12)
 ax2.set_title('DenseNet - Training and Validation Accuracy', fontsize=14, fontweight='bold')
