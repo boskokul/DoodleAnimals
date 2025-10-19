@@ -40,12 +40,12 @@ class Config:
     LEARNING_RATE = 0.001
     WEIGHT_DECAY = 1e-4
 
-    EARLY_STOPPING_PATIENCE = 5
-    MIN_DELTA = 0.5 
+    EARLY_STOPPING_PATIENCE = 4
+    MIN_DELTA = 0.01 
 
     DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-    LR_SCHEDULER_PATIENCE = 3
+    LR_SCHEDULER_PATIENCE = 2
 
     MODEL_SAVE_PATH = 'googlenet_doodle_best.pth'
 
@@ -65,7 +65,7 @@ class EarlyStopper:
         if self.best_score is None:
             self.best_score = score
             self.save_checkpoint(val_metric, model_save_path, model)
-        elif (score < self.best_score + self.min_delta):
+        elif (score > self.best_score - self.min_delta):
             
             self.counter += 1
             print(f'EarlyStopping counter: {self.counter} out of {self.patience}')
@@ -81,7 +81,7 @@ class EarlyStopper:
 
     def save_checkpoint(self, val_metric, model_save_path, model):
         torch.save(model.state_dict(), model_save_path)
-        print(f'Model saved! (Best Val Metric: {val_metric:.2f}%)')
+        print(f'Model saved! (Best Val Loss: {val_metric:.4f})')
 
 
 # Da bismo koritili dataset za treniranje modela u pytorch-u moramo da napravimo dataloader-e a za to moramo prvo da nasledimo apstraktnu klasu Dataset i implementiramo njene metode __len__ i __getitem__
@@ -260,7 +260,6 @@ def validate(model, dataloader, criterion, device):
 
 
 # samo treniranje, za sad neka bude adam (videcemo jos) i ovi parametri za learning rate scheduler neka budu tako postavljeni pa cemo videti probleme sa overfittingom da ispravimo
-# potrebno je doraditi da se implementira early stopping
 
 criterion = nn.CrossEntropyLoss()
 optimizer = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()),
@@ -270,7 +269,7 @@ scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0
 
 early_stopper = EarlyStopper(
     patience=config.EARLY_STOPPING_PATIENCE,
-    min_delta=config.MIN_DELTA,
+    min_delta=config.MIN_DELTA
 )
 
 train_losses, train_accs = [], []
@@ -297,20 +296,22 @@ for epoch in range(config.NUM_EPOCHS):
     if new_lr != current_lr:
         print(f"Learning rate reduced: {current_lr:.6f} -> {new_lr:.6f}")
 
-    # provera ranog zaustavljanja
-    if early_stopper(val_acc, config.MODEL_SAVE_PATH, model):
+    if early_stopper(val_loss, config.MODEL_SAVE_PATH, model):
         print(f"\nEarly stopping triggered after {epoch+1} epochs.")
         break
 
-# Ovo je najveci val accuracy sto je postignut
-best_val_acc = early_stopper.best_score 
-print(f"Best validation accuracy: {best_val_acc:.2f}%")
+# Ponovo učitavamo najbolji model da bismo dobili najbolji Val Accuracy
+model.load_state_dict(torch.load(config.MODEL_SAVE_PATH))
+# Ponovno pokretanje validacije da dobijemo najbolji accuracy (iako je rano zaustavljanje bilo po loss-u)
+_, best_val_acc = validate(model, val_loader, criterion, config.DEVICE)
+
+print(f"Best validation loss: {early_stopper.best_score:.4f}")
+print(f"Validation accuracy for the best model (lowest loss): {best_val_acc:.2f}%")
+
 
 
 
 # Evaluacione metrike i vizualizacija
-
-model.load_state_dict(torch.load(config.MODEL_SAVE_PATH))
 model.eval()
 
 all_preds = []
