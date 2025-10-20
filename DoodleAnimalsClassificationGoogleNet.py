@@ -37,7 +37,8 @@ class Config:
     # Hiperparametri
     BATCH_SIZE = 64
     NUM_EPOCHS = 30 # Povecano da bi se dalo prostora za Early Stopping
-    LEARNING_RATE = 0.001
+    LEARNING_RATE_CONV = 0.0001
+    LEARNING_RATE_CLASSIFIER = 0.001
     WEIGHT_DECAY = 1e-4
 
     EARLY_STOPPING_PATIENCE = 4
@@ -262,8 +263,20 @@ def validate(model, dataloader, criterion, device):
 # samo treniranje, za sad neka bude adam (videcemo jos) i ovi parametri za learning rate scheduler neka budu tako postavljeni pa cemo videti probleme sa overfittingom da ispravimo
 
 criterion = nn.CrossEntropyLoss()
-optimizer = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()),
-                       lr=config.LEARNING_RATE, weight_decay=config.WEIGHT_DECAY)
+conv_params = []
+classifier_params = []
+
+for name, param in model.named_parameters():
+    if param.requires_grad:
+        if any(keyword in name for keyword in ["fc", "classifier", "head"]): #generiski za sve arhitekture koje koristimo
+            classifier_params.append(param)
+        else:
+            conv_params.append(param)
+
+optimizer = optim.Adam([
+    {"params": conv_params, "lr": config.LEARNING_RATE_CONV},   # za konvolutivne slojeve
+    {"params": classifier_params, "lr": config.LEARNING_RATE_CLASSIFIER}  # za klasifikator
+], weight_decay=config.WEIGHT_DECAY)
 # Scheduler prati loss, pa je mode='min'
 scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=config.LR_SCHEDULER_PATIENCE) 
 
