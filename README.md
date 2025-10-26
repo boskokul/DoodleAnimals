@@ -12,10 +12,10 @@ Projektom se rešava problem klasifikacije gde se prepoznaju ručno nacrtane ski
 U folderu **`finalno/`** se nalaze Jupiter Notebook fajlovi sa implementacijama različitih modela.
 DesnseNet implementacija se nalazi u **`DenseNetFinal.ipynb`**, GoogleNet implementacija se nalazi
 u **`GoogleNetfinalno.ipynb`**, ResNet implementacija se nalazi u **`ResNet_2lr.ipynb`**, 
-EfficientNet implementacija se nalazi u *`EfficientNet_2lr.ipynb`**.
+EfficientNet implementacija se nalazi u **`EfficientNet_2lr.ipynb`**.
 
 ### Pokretanje
-Jupiter Notebook fajlovi treba da se uvezu u **Google Colab** okruženje. Pored toga, na Google drive treba napraviti novi folder pod nazivom **dataset** gde je potrebno smestiti zipovan folder skupa podataka. Skup podataka je potrbeno nazvati **20animals**. 
+Jupiter Notebook fajlovi treba da se uvezu u **Google Colab** okruženje. Pored toga, na Google Drive treba napraviti novi folder pod nazivom **dataset** gde je potrebno smestiti zipovan folder skupa podataka. Skup podataka je potrbeno nazvati **20animals**. 
 
 * Podešavanje **Runtime** okruženja se radi na sledeći način:
 	* Pod tabom **Runtime** pronaći **Change runtime type**
